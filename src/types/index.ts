@@ -1,14 +1,3 @@
-// export interface ICollection{
-//     file_type:string,
-//     dataUrl: string,
-//     cardinal_address: string
-//     cardinal_pubkey: string
-//     ordinal_address: string
-//     ordinal_pubkey: string
-//     wallet: string
-//     order_id: string
-//     status: string
-// }
 
 
 export interface ICreateInscription extends IDoc {
@@ -30,25 +19,17 @@ export interface ICreateInscription extends IDoc {
     fee_rate: number;
   }
 
- interface FileDataType{
-    fileName: string;
-    type:string,
-    size:number
-    dataUrl: string,
-   
-  }
-  
+ export interface ISingleInput{
+    address: string;
+    amount: number;
+  };
   export interface IDoc {
-    fileData:FileDataType;
     cardinal_address: string;
     cardinal_pubkey: string;
     ordinal_address: string;
     ordinal_pubkey: string;
     wallet: string;
-    order_id: string;
-    status: string;
-    fee_rate: number;
-    inscription_fee?:number
+    inputs:ISingleInput[];
   }
   
 

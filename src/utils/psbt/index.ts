@@ -1,228 +1,226 @@
-
 import * as bitcoin from "bitcoinjs-lib";
 import secp256k1 from "@bitcoinerlab/secp256k1";
-import { ICreateInscription, IInscribeOrder } from "@/types";
+import { ICreateInscription, IDoc, IInscribeOrder, ISingleInput } from "@/types";
 import { AddressTxsUtxo, UTXO, getUtxosByAddress } from "@/types/psbt";
 import axios from "axios";
-const DUMMY_UTXO_VALUE=1000;
+const DUMMY_UTXO_VALUE = 1000;
 export async function generateUnsignedPsbtForInscription(
-    payment_address: string,
-    publickey: string | undefined,
-    fee_rate: number,
-    wallet: string,
-    inscriptions: any[],
-    //order: IInscribeOrder,
-    // inscription_id?: string,
-    // ordinal_publickey?: string
-  ) {
-    let payerUtxos: AddressTxsUtxo[];
-    let paymentUtxos: AddressTxsUtxo[] | undefined;
-    try {
-      payerUtxos = await getUtxosByAddress(payment_address);
-    } catch (e) {
-      console.error(e);
-      return Promise.reject("Mempool error");
-    }
-  
-    try {
-      paymentUtxos = await selectPaymentUTXOs(
-        payerUtxos,//get user or utxos or all utxos
-        inscriptions[0].inscription_fee,
-        // order.chain_fee + order.service_fee + 10000,//inscription fee
-        Math.floor(Math.random() * 3) + 3, // number between 3-5
-        inscriptions.length + 1,//maine inscription+ 1 ish liye kiya h  recieved + change
-        fee_rate,
-        payment_address.startsWith("bc1p")
-        // condition for taproot start  from bc1p cardinal or ordinal addresss
-      );
-  
-      if (!paymentUtxos) throw Error("Balance not enough");
-  
-      let psbt = null;
-      let inputs = null; // Assuming inputs is not declared elsewhere
-  
-     
-     psbt =await generateUnsignedPsbtForInscriptionPSBTBase64(
-            payment_address,
-            publickey,
-            paymentUtxos,
-            fee_rate,
-            wallet,
-            inscriptions,
-            
-            
-            // inscription_id,
-            // ordinal_publickey
-          );
-      
-      console.log({ psbt, inputs });
-      return { psbt, inputs };
-    } catch (err: any) {
-      throw Error(err);
-    }
+  payment_address: string,
+  publickey: string | undefined,
+  fee_rate: number,
+  wallet: string,
+  userInfo: ISingleInput[],
+
+) {
+
+  console.log("call in generateUnsigned function");
+  console.log("heheresljfkfsfsdlkfklasjfjlsfkklsdjfksdfksdalkjf ------------------------", userInfo)
+  const totalAmount = userInfo.reduce((acc, curr) => acc + Number(curr.amount), 0);
+  console.log(totalAmount, "amount");
+  let payerUtxos: AddressTxsUtxo[];
+  let paymentUtxos: AddressTxsUtxo[] | undefined;
+  try {
+    payerUtxos = await getUtxosByAddress(payment_address);
+  } catch (e) {
+    console.error(e);
+    return Promise.reject("Mempool error");
   }
 
- 
-  async function doesUtxoContainInscription(
-    utxo: AddressTxsUtxo
-  ): Promise<boolean> {
-    const apiUrl = process.env.NEXT_PUBLIC_NETWORK?.includes("testnet")
-      ? "http://64.20.33.102:56018"
-      : "https://ord.ordinalnovus.com/api";
-    // console.log({ apiUrl }, "ins");
-    if (!apiUrl) {
-      // If the API URL is not set, return true as per your requirement
-      console.warn("API provider URL is not defined in environment variables");
+  try {
+    paymentUtxos = await selectPaymentUTXOs(
+      payerUtxos,//get user or utxos or all utxos
+      totalAmount,//total amount
+      Math.floor(Math.random() * 3) + 3, // number between 3-5
+      userInfo.length + 1,//maine inscription+ 1 ish liye kiya h  recieved + change
+      fee_rate,
+      payment_address.startsWith("bc1p")
+      // condition for taproot start  from bc1p cardinal or ordinal addresss
+    );
+
+    if (!paymentUtxos) throw Error("Balance not enough");
+
+    let psbt = null;
+    let inputs = null; // Assuming inputs is not declared elsewhere
+
+
+    psbt = await generateUnsignedPsbtForInscriptionPSBTBase64(
+      payment_address,
+      publickey,
+      paymentUtxos,
+      fee_rate,
+      wallet,
+      userInfo,
+      totalAmount
+    );
+
+    console.log({ psbt, inputs });
+    return { psbt, inputs };
+  } catch (err: any) {
+    throw Error(err);
+  }
+}
+
+
+async function doesUtxoContainInscription(
+  utxo: AddressTxsUtxo
+): Promise<boolean> {
+  const apiUrl = process.env.NEXT_PUBLIC_NETWORK?.includes("testnet")
+    ? "http://64.20.33.102:56018"
+    : "https://ord.ordinalnovus.com/api";
+  // console.log({ apiUrl }, "ins");
+  if (!apiUrl) {
+    // If the API URL is not set, return true as per your requirement
+    console.warn("API provider URL is not defined in environment variables");
+    return true;
+  }
+  try {
+    const url = `${apiUrl}/output/${utxo.txid}:${utxo.vout}`;
+    const response = await axios.get(url, {
+      headers: {
+        Accept: "application/json",
+      },
+    });
+    // console.log({ url, data: response.data });
+    if (response.data && Array.isArray(response.data.inscriptions)) {
+      return response.data.inscriptions.length > 0;
+    } else if (response.data.inscriptions.length === 0) {
+      // If the data is empty array, return false
+      console.warn("Empty Array is returned");
+      return false;
+    } else {
       return true;
     }
-    try {
-      const url = `${apiUrl}/output/${utxo.txid}:${utxo.vout}`;
-      const response = await axios.get(url, {
+  } catch (error) {
+    // In case of any API error, return true
+    console.error("Error in doesUtxoContainInscription:", error);
+    return true;
+  }
+}
+
+export async function doesUtxoContainRunes(
+  utxo: AddressTxsUtxo
+): Promise<boolean> {
+  const cacheKey = `rune_utxo:${utxo.txid}:${utxo.vout}`;
+  try {
+    // First, try to retrieve data from cache
+    // const cachedRunes = await getCache(cacheKey);
+    // if (cachedRunes !== null) {
+    //   console.log(
+    //     "Returning runes data from cache...",
+    //     // cachedRunes,
+    //     typeof cachedRunes
+    //   );
+    //   return cachedRunes; // Ensure the string from the cache is converted back to boolean
+    // }
+
+    const apiUrl = process.env.NEXT_PUBLIC_NETWORK?.includes("testnet")
+      ? "http://64.20.33.102:56018/"
+      : `${process.env.NEXT_PUBLIC_PROVIDER}/`;
+
+    if (!apiUrl) {
+      console.warn("API provider URL is not defined in environment variables");
+      return true; // Defaulting to true if the API URL isn't set
+    }
+
+    const response = await axios.get(
+      `${apiUrl}output/${utxo.txid}:${utxo.vout}`,
+      {
         headers: {
           Accept: "application/json",
         },
-      });
-      // console.log({ url, data: response.data });
-      if (response.data && Array.isArray(response.data.inscriptions)) {
-        return response.data.inscriptions.length > 0;
-      } else if (response.data.length === 0) {
-        // If the data is empty array, return false
-        console.warn("Empty Array is returned");
-        return false;
-      } else {
-        return true;
       }
-    } catch (error) {
-      // In case of any API error, return true
-      console.error("Error in doesUtxoContainInscription:", error);
-      return true;
-    }
-  }
+    );
 
-  export async function doesUtxoContainRunes(
-    utxo: AddressTxsUtxo
-  ): Promise<boolean> {
-    const cacheKey = `rune_utxo:${utxo.txid}:${utxo.vout}`;
-    try {
-      // First, try to retrieve data from cache
-      // const cachedRunes = await getCache(cacheKey);
-      // if (cachedRunes !== null) {
-      //   console.log(
-      //     "Returning runes data from cache...",
-      //     // cachedRunes,
-      //     typeof cachedRunes
-      //   );
-      //   return cachedRunes; // Ensure the string from the cache is converted back to boolean
-      // }
-  
-      const apiUrl = process.env.NEXT_PUBLIC_NETWORK?.includes("testnet")
-        ? "http://64.20.33.102:56018/"
-        : `${process.env.NEXT_PUBLIC_PROVIDER}/`;
-  
-      if (!apiUrl) {
-        console.warn("API provider URL is not defined in environment variables");
-        return true; // Defaulting to true if the API URL isn't set
-      }
-  
-      const response = await axios.get(
-        `${apiUrl}output/${utxo.txid}:${utxo.vout}`,
-        {
-          headers: {
-            Accept: "application/json",
-          },
-        }
-      );
-  
-      // Store result in cache if no runes are found
-      if (response.data.runes?.length) {
-        // await setCache(cacheKey, response.data.runes, 172800);
-         return response.data.runes;
-      } else {
-        // await setCache(cacheKey, false, 172800); // Store the information for 2 days (172800 seconds)
-         return false;
-      }
-    } catch (error) {
-      console.error("Error in doesUtxoContainRunes:", error);
-      return true; // Defaulting to true in case of an error
+    // Store result in cache if no runes are found
+    if (response.data.runes?.length) {
+      // await setCache(cacheKey, response.data.runes, 172800);
+      return response.data.runes;
+    } else {
+      // await setCache(cacheKey, false, 172800); // Store the information for 2 days (172800 seconds)
+      return false;
     }
+  } catch (error) {
+    console.error("Error in doesUtxoContainRunes:", error);
+    return true; // Defaulting to true in case of an error
   }
+}
 
-  function calculateTxFee(
-    vinsLength: number,
-    voutsLength: number,
-    feeRate: number,
-    inputAddressType: "pwpkh" | "taproot" | "p2sh_p2wpkh",
-    outputAddressType: "pwpkh" | "taproot" | "p2sh_p2wpkh",
-    includeChangeOutput: 0 | 1 = 1,
-    changeAddressType: "pwpkh" | "taproot" | "p2sh_p2wpkh" = "pwpkh"
+function calculateTxFee(
+  vinsLength: number,
+  voutsLength: number,
+  feeRate: number,
+  inputAddressType: "pwpkh" | "taproot" | "p2sh_p2wpkh",
+  outputAddressType: "pwpkh" | "taproot" | "p2sh_p2wpkh",
+  includeChangeOutput: 0 | 1 = 1,
+  changeAddressType: "pwpkh" | "taproot" | "p2sh_p2wpkh" = "pwpkh"
+): number {
+  const inputSizes = {
+    pwpkh: { base: 31, witness: 107 },
+    taproot: { base: 43, witness: 65 },
+    p2sh_p2wpkh: { base: 58, witness: 107 },
+  };
+  const outputSizes = {
+    pwpkh: 31,
+    taproot: 43,
+    p2sh_p2wpkh: 32,
+  };
+  // Calculate transaction overhead, considering whether any input uses SegWit
+  function getTxOverhead(
+    vins: number,
+    vouts: number,
+    isSegWit: boolean
   ): number {
-    const inputSizes = {
-      pwpkh: { base: 31, witness: 107 },
-      taproot: { base: 43, witness: 65 },
-      p2sh_p2wpkh: { base: 58, witness: 107 },
-    };
-    const outputSizes = {
-      pwpkh: 31,
-      taproot: 43,
-      p2sh_p2wpkh: 32,
-    };
-    // Calculate transaction overhead, considering whether any input uses SegWit
-    function getTxOverhead(
-      vins: number,
-      vouts: number,
-      isSegWit: boolean
-    ): number {
-      return (
-        10 + // Basic non-witness transaction overhead (version, locktime)
-        getSizeOfVarInt(vins) + // Input count
-        getSizeOfVarInt(vouts) + // Output count
-        (isSegWit ? 2 : 0)
-      ); // SegWit marker and flag only if SegWit inputs are present
-    }
-    let totalBaseSize = getTxOverhead(
-      vinsLength,
-      voutsLength,
-      inputAddressType.startsWith("p2")
-    );
-    let totalWitnessSize = 0;
-    // Calculate total base size and witness size for inputs
-    for (let i = 0; i < vinsLength; i++) {
-      totalBaseSize += inputSizes[inputAddressType].base;
-      totalWitnessSize += inputSizes[inputAddressType].witness;
-    }
-    // Calculate total base size for outputs
-    totalBaseSize += voutsLength * outputSizes[outputAddressType];
-    // Include change output if specified
-    if (includeChangeOutput) {
-      totalBaseSize += outputSizes[changeAddressType];
-    }
-    // Calculate total vbytes considering witness discount for SegWit inputs
-    const totalVBytes = totalBaseSize + Math.ceil(totalWitnessSize / 4);
-    const fee = totalVBytes * feeRate;
-    console.log(
-      `Final Transaction Size: ${totalVBytes} vbytes, Fee Rate: ${feeRate}, Calculated Fee: ${fee}`,
-      { totalVBytes, feeRate, fee }
-    );
-    return fee;
+    return (
+      10 + // Basic non-witness transaction overhead (version, locktime)
+      getSizeOfVarInt(vins) + // Input count
+      getSizeOfVarInt(vouts) + // Output count
+      (isSegWit ? 2 : 0)
+    ); // SegWit marker and flag only if SegWit inputs are present
   }
+  let totalBaseSize = getTxOverhead(
+    vinsLength,
+    voutsLength,
+    inputAddressType.startsWith("p2")
+  );
+  let totalWitnessSize = 0;
+  // Calculate total base size and witness size for inputs
+  for (let i = 0; i < vinsLength; i++) {
+    totalBaseSize += inputSizes[inputAddressType].base;
+    totalWitnessSize += inputSizes[inputAddressType].witness;
+  }
+  // Calculate total base size for outputs
+  totalBaseSize += voutsLength * outputSizes[outputAddressType];
+  // Include change output if specified
+  if (includeChangeOutput) {
+    totalBaseSize += outputSizes[changeAddressType];
+  }
+  // Calculate total vbytes considering witness discount for SegWit inputs
+  const totalVBytes = totalBaseSize + Math.ceil(totalWitnessSize / 4);
+  const fee = totalVBytes * feeRate;
+  console.log(
+    `Final Transaction Size: ${totalVBytes} vbytes, Fee Rate: ${feeRate}, Calculated Fee: ${fee}`,
+    { totalVBytes, feeRate, fee }
+  );
+  return fee;
+}
 
-  export const satsToDollars = async (sats: number) => {
-    // Fetch the current bitcoin price from session storage
-    const bitcoin_price = await getBitcoinPriceFromCoinbase();
-    // Convert satoshis to bitcoin, then to USD
-    const value_in_dollars = (sats / 100_000_000) * bitcoin_price;
-    return value_in_dollars;
-  };
-  
-  export const getBitcoinPriceFromCoinbase = async () => {
-    var { data } = await axios.get(
-      "https://api.coinbase.com/v2/prices/BTC-USD/spot"
-    );
-    var price = data.data.amount;
-    return price;
-  };
+export const satsToDollars = async (sats: number) => {
+  // Fetch the current bitcoin price from session storage
+  const bitcoin_price = await getBitcoinPriceFromCoinbase();
+  // Convert satoshis to bitcoin, then to USD
+  const value_in_dollars = (sats / 100_000_000) * bitcoin_price;
+  return value_in_dollars;
+};
 
- 
+export const getBitcoinPriceFromCoinbase = async () => {
+  var { data } = await axios.get(
+    "https://api.coinbase.com/v2/prices/BTC-USD/spot"
+  );
+  var price = data.data.amount;
+  return price;
+};
+
+
 
 
 
@@ -241,41 +239,39 @@ async function mapUtxos(utxosFromMempool: AddressTxsUtxo[]): Promise<UTXO[]> {
   return ret;
 }
 
-async function getTxHexById(txId:any): Promise<string> {
- // if (!txHexByIdCache[txId]) {
-    const url =
-      process.env.NEXT_PUBLIC_NETWORK === "testnet"
-        ? `https://mempool.space/testnet/api/tx/${txId}/hex`
-        : `https://mempool-api.ordinalnovus.com/tx/${txId}/hex`;
-        return await fetch(url).then((response) => response.text());
+async function getTxHexById(txId: any): Promise<string> {
+  // if (!txHexByIdCache[txId]) {
+  const url =
+    process.env.NEXT_PUBLIC_NETWORK === "testnet"
+      ? `https://mempool.space/testnet/api/tx/${txId}/hex`
+      : `https://mempool-api.ordinalnovus.com/tx/${txId}/hex`;
+  return await fetch(url).then((response) => response.text());
 
-
-  
 }
 
 
-function calculateTxBytesFeeWithRate(
-  vinsLength: number,
-  voutsLength: number,
-  feeRate: number,
-  includeChangeOutput: 0 | 1 = 1
-): number {
-  const baseTxSize = 10;
-  const inSize = 180;
-  const outSize = 34;
+// function calculateTxFee(
+//   vinsLength: number,
+//   voutsLength: number,
+//   feeRate: number,
+//   includeChangeOutput: 0 | 1 = 1
+// ): number {
+//   const baseTxSize = 10;
+//   const inSize = 180;
+//   const outSize = 34;
 
-  const txSize =
-    baseTxSize +
-    vinsLength * inSize +
-    voutsLength * outSize +
-    includeChangeOutput * outSize;
-  const fee = txSize * feeRate;
+//   const txSize =
+//     baseTxSize +
+//     vinsLength * inSize +
+//     voutsLength * outSize +
+//     includeChangeOutput * outSize;
+//   const fee = txSize * feeRate;
 
-  console.log(
-    `Transaction Size: ${txSize}, Fee Rate: ${feeRate}, Calculated Fee: ${fee}`
-  );
-  return fee;
-}
+//   console.log(
+//     `Transaction Size: ${txSize}, Fee Rate: ${feeRate}, Calculated Fee: ${fee}`
+//   );
+//   return fee;
+// }
 
 
 
@@ -296,12 +292,15 @@ export async function selectPaymentUTXOs(
     .filter((x) => x.value > DUMMY_UTXO_VALUE)//DUMMY_UTXO_VALUE=1000 ->constant
     .sort((a, b) => b.value - a.value);
 
+  console.log("utxos filtered and sorted, remaining: ", utxos.length)
   for (const utxo of utxos) {
     // Never spend a utxo that contains an inscription for cardinal purposes
     if (await doesUtxoContainInscription(utxo)) {
+      console.log("inscription found in ", utxo.txid + ":" + utxo.vout)
       continue;
     }
     if (await doesUtxoContainRunes(utxo)) {
+      console.log("rune found in ", utxo.txid + ":" + utxo.vout)
       continue;
     }
     selectedUtxos.push(utxo);
@@ -336,21 +335,22 @@ export async function selectPaymentUTXOs(
     if (
       selectedAmount >=
       amount +
-        calculateTxFee(
-          vinsLength + selectedUtxos.length,
-          voutsLength,
-          fee_rate,
-          taprootAddress ? "taproot" : "pwpkh", // Adjust based on actual use
+      calculateTxFee(
+        vinsLength + selectedUtxos.length,
+        voutsLength,
+        fee_rate,
+        taprootAddress ? "taproot" : "pwpkh", // Adjust based on actual use
 
-          taprootAddress ? "taproot" : "pwpkh",
-          1, // Include change output
-          taprootAddress ? "taproot" : "pwpkh" // Change output type
-        )
+        taprootAddress ? "taproot" : "pwpkh",
+        1, // Include change output
+        taprootAddress ? "taproot" : "pwpkh" // Change output type
+      )
     ) {
       break;
     }
   }
 
+  console.log({ selectedAmount, amount })
   if (selectedAmount < amount) {
     throw `Your wallet needs ${Number(
       await satsToDollars(amount - selectedAmount)
@@ -366,7 +366,8 @@ async function generateUnsignedPsbtForInscriptionPSBTBase64(
   unqualifiedUtxos: AddressTxsUtxo[],
   fee_rate: number,
   wallet: string,
-  inscriptions: any[],
+  userInfo: any[],
+  totalAmount: number
   // order: IInscribeOrder
 ): Promise<string> {
   wallet = wallet?.toLowerCase();
@@ -391,9 +392,11 @@ async function generateUnsignedPsbtForInscriptionPSBTBase64(
     payment_address.startsWith("bc1q") || payment_address.startsWith("tb1q");
   for (const utxo of mappedUnqualifiedUtxos) {
     if (await doesUtxoContainInscription(utxo)) {
+      console.log("inscription found")
       continue;
     }
     if (await doesUtxoContainRunes(utxo)) {
+      console.log("rune found")
       continue;
     }
     // const tx = bitcoin.Transaction.fromHex(await getTxHexById(utxo.txid));
@@ -435,30 +438,37 @@ async function generateUnsignedPsbtForInscriptionPSBTBase64(
     psbt.addInput(input);
     totalValue += utxo.value;
     paymentUtxoCount += 1;
-    const fees = calculateTxBytesFeeWithRate(
+    const fees = calculateTxFee(
       paymentUtxoCount,
-      inscriptions.length + 1, // inscription + service fee output
-      fee_rate
+      userInfo.length + 1, // inscription + service fee output
+      fee_rate,
+      "pwpkh",
+      "pwpkh",
+      1,
+      "pwpkh"
     );
-    if (totalValue >= inscriptions[0].inscription_fee + fees) {
+    if (totalValue >= totalAmount + fees) {
       break;
     }
   }
-  const finalFees = calculateTxBytesFeeWithRate(
+  const finalFees = calculateTxFee(
     //do some modification
     paymentUtxoCount,
-    inscriptions.length + 1, // inscription + service fee output
-    fee_rate
+    userInfo.length + 1, // inscription + service fee output
+    fee_rate, "pwpkh",
+    "pwpkh",
+    1,
+    "pwpkh"
   );
   console.log({ totalValue, finalFees });
- // chain fee -> inscriptions_fee
+  // chain fee -> inscriptions_fee
   // const changeValue =
   //   totalValue -
-  //   (inscriptions[0].inscription_fee + inscriptions[0]  .service_fee) -
+  //   (userInf[0].totalAmount + userInf[0]  .service_fee) -
   //   Math.floor(fee_rate < 150 ? finalFees / 1.5 : finalFees / 1.3);
   const changeValue =
-    totalValue -
-    inscriptions[0].inscription_fee -Math.floor(fee_rate < 150 ? finalFees / 1.5 : finalFees / 2);
+    totalValue - totalAmount - finalFees
+  // totalAmount -Math.floor(fee_rate < 150 ? finalFees / 1.5 : finalFees / 2);
   console.log({ changeValue });
   // We must have enough value to create a dummy utxo and pay for tx fees
   if (changeValue < 0) {
@@ -466,10 +476,10 @@ async function generateUnsignedPsbtForInscriptionPSBTBase64(
       `You might have pending transactions or not enough fund to complete tx at the provided FeeRate`
     );
   }
-  inscriptions.map((i: ICreateInscription) => {
+  userInfo.map((i: ISingleInput) => {
     psbt.addOutput({
-      address: i.inscription_address,
-      value: i.inscription_fee,
+      address: i.address,
+      value: i.amount,
     });
   });
   // psbt.addOutput({
